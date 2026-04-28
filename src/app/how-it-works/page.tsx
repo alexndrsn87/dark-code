@@ -30,7 +30,7 @@ export default function HowItWorksPage() {
           ))}
         </div>
 
-        <div className="mt-8 rounded-[2rem] border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-7 md:p-9">
+        <div className="mt-8 rounded-[2rem] border border-[var(--accent)]/30 bg-black/40 p-7 md:p-9">
           <p className="font-mono text-xs uppercase tracking-[0.24em] text-[var(--accent)]">Short version</p>
           <ul className="mt-6 grid gap-3 text-lg md:grid-cols-2">
             <li>Free preview in {prototype.buildWindow}, built around your business.</li>

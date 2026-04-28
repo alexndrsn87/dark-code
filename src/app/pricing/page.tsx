@@ -24,7 +24,7 @@ export default function PricingPage() {
               className={`glass rounded-[2rem] p-7 ${plan.featured ? "border-[var(--accent)]/45 shadow-[0_0_90px_rgba(127,255,176,0.16)]" : ""}`}
             >
               {plan.featured ? (
-                <p className="mb-5 inline-flex rounded-full bg-[var(--accent)] px-3 py-1 font-mono text-xs font-semibold uppercase tracking-[0.18em] text-black">
+                <p className="mb-5 inline-flex rounded-full bg-[var(--accent)] px-3 py-1 font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent-ink)]">
                   Most popular
                 </p>
               ) : null}
@@ -45,7 +45,7 @@ export default function PricingPage() {
               </ul>
               <a
                 href={brand.calUrl}
-                className="mt-8 inline-flex w-full justify-center rounded-full bg-[var(--accent)] px-5 py-3 font-semibold text-black"
+                className="mt-8 inline-flex w-full justify-center rounded-full bg-[var(--accent)] px-5 py-3 font-semibold text-[var(--accent-ink)]"
               >
                 Start with a free preview
               </a>

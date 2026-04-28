@@ -1,262 +1,498 @@
 "use client";
 
-import { Canvas, ThreeEvent, useFrame } from "@react-three/fiber";
-import { Html, Line, RoundedBox } from "@react-three/drei";
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Group, MathUtils, Vector3 } from "three";
 import { Pause, Play } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { brand } from "@/content/site";
-import { codeFragments, mockupStyles, type CodeFragment } from "./mockups";
 
-function useReducedMotionPreference() {
-  const [reduced, setReduced] = useState(
+type Phase = "intro" | "constellation" | "assembling" | "assembled" | "dissolving";
+
+const phaseDurations: Record<Phase, number> = {
+  intro: 1400,
+  constellation: 4200,
+  assembling: 1400,
+  assembled: 3200,
+  dissolving: 1200,
+};
+
+const mockupTypes = ["saas", "landing", "portfolio", "ecommerce", "blog"] as const;
+const mockupLabels: Record<(typeof mockupTypes)[number], string> = {
+  saas: "dashboard.tsx",
+  landing: "hero.jsx",
+  portfolio: "gallery.tsx",
+  ecommerce: "shop.tsx",
+  blog: "editorial.tsx",
+};
+
+const textSnippets = ["<hero/>", "<nav/>", "<cta/>", "ship()", "deploy()", "build()"] as const;
+
+class Node {
+  isText: boolean;
+  text: string;
+  cx: number;
+  cy: number;
+  cz: number;
+  tx: number;
+  ty: number;
+  tz: number;
+  x: number;
+  y: number;
+  z: number;
+  size: number;
+  opacity: number;
+  targetOpacity: number;
+
+  constructor(index: number, total: number) {
+    // Only every 6th node is text — keeps things legible.
+    this.isText = index % 6 === 0;
+    this.text = textSnippets[Math.floor(index / 6) % textSnippets.length];
+    const angle = index * 2.399963229728653;
+    const radius = Math.sqrt((index + 0.5) / total);
+    this.cx = Math.cos(angle) * radius * 1.2;
+    this.cy = Math.sin(angle) * radius * 0.92;
+    this.cz = 0.4 + (index % 7) * 0.12;
+    this.tx = this.cx;
+    this.ty = this.cy;
+    this.tz = this.cz;
+    this.x = this.cx;
+    this.y = this.cy;
+    this.z = this.cz;
+    this.size = this.isText ? 11 : 2.2;
+    this.opacity = 0;
+    this.targetOpacity = this.isText ? 0.7 : 0.55;
+  }
+
+  setTarget(x: number, y: number, z: number) {
+    this.tx = x;
+    this.ty = y;
+    this.tz = z;
+  }
+
+  setConstellationTarget() {
+    this.tx = this.cx;
+    this.ty = this.cy;
+    this.tz = this.cz;
+  }
+
+  project(width: number, height: number, parallaxX: number, parallaxY: number, camera: number) {
+    const cx = width / 2;
+    const cy = height / 2;
+    const base = Math.min(width, height);
+    const fov = base * 1.45 * camera;
+    const scale = fov / (fov + this.z * base * 0.52);
+    return {
+      x: cx + (this.x * width * 0.42 + parallaxX) * scale,
+      y: cy + (this.y * height * 0.4 + parallaxY) * scale,
+      scale,
+    };
+  }
+}
+
+function generateMockup(type: (typeof mockupTypes)[number], count: number) {
+  const targets: { x: number; y: number; z: number }[] = [];
+  const addLine = (x1: number, x2: number, y: number, points: number, z = 0.4) => {
+    for (let i = 0; i < points; i++) {
+      const progress = points === 1 ? 0 : i / (points - 1);
+      targets.push({ x: x1 + (x2 - x1) * progress, y, z });
+    }
+  };
+  const addRect = (x: number, y: number, w: number, h: number, points: number, z = 0.4) => {
+    const perimeter = 2 * (w + h);
+    for (let i = 0; i < points; i++) {
+      const t = (i / points) * perimeter;
+      let px = 0;
+      let py = 0;
+      if (t < w) {
+        px = x - w / 2 + t;
+        py = y - h / 2;
+      } else if (t < w + h) {
+        px = x + w / 2;
+        py = y - h / 2 + (t - w);
+      } else if (t < 2 * w + h) {
+        px = x + w / 2 - (t - w - h);
+        py = y + h / 2;
+      } else {
+        px = x - w / 2;
+        py = y + h / 2 - (t - 2 * w - h);
+      }
+      targets.push({ x: px, y: py, z });
+    }
+  };
+
+  if (type === "saas") {
+    addLine(-0.72, 0.72, -0.62, 10);
+    addRect(-0.36, -0.18, 0.5, 0.28, 14);
+    addRect(0.36, -0.18, 0.5, 0.28, 14);
+    addRect(0, 0.32, 1.04, 0.26, 18);
+  } else if (type === "landing") {
+    addLine(-0.6, 0.6, -0.6, 10);
+    addLine(-0.55, 0.55, -0.22, 12);
+    addLine(-0.4, 0.4, -0.04, 10);
+    addLine(-0.3, 0.3, 0.12, 8);
+    addRect(0, 0.4, 0.4, 0.18, 12);
+  } else if (type === "portfolio") {
+    addRect(-0.42, -0.22, 0.4, 0.4, 14);
+    addRect(0.16, -0.22, 0.4, 0.4, 14);
+    addRect(-0.13, 0.32, 0.86, 0.24, 20);
+  } else if (type === "ecommerce") {
+    addLine(-0.65, 0.65, -0.58, 10);
+    for (let col = 0; col < 3; col++) {
+      const x = -0.46 + col * 0.46;
+      addRect(x, 0.08, 0.36, 0.46, 12);
+    }
+  } else {
+    addLine(-0.55, 0.55, -0.55, 10);
+    addLine(-0.55, 0.55, -0.32, 10);
+    for (let line = 0; line < 4; line++) {
+      addLine(-0.5, 0.5 - (line % 2) * 0.12, -0.08 + line * 0.18, 8);
+    }
+  }
+
+  const realCount = targets.length;
+  while (targets.length < count) {
+    targets.push({ x: 0, y: 0, z: 3.5 });
+  }
+
+  return { targets, realCount };
+}
+
+function drawMockupScaffold(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  type: (typeof mockupTypes)[number],
+  alpha: number,
+) {
+  const x = width * 0.14;
+  const y = height * 0.16;
+  const w = width * 0.72;
+  const h = height * 0.66;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = "rgba(127,255,176,1)";
+  ctx.fillStyle = "rgba(127,255,176,0.08)";
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, x, y, w, h, 18);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(245,241,234,0.22)";
+  ctx.fillRect(x + 22, y + 24, w * 0.18, 6);
+  ctx.fillRect(x + w - 110, y + 24, 38, 5);
+  ctx.fillRect(x + w - 60, y + 24, 38, 5);
+
+  if (type === "saas") {
+    ctx.fillStyle = "rgba(245,241,234,0.1)";
+    roundRect(ctx, x + 24, y + 64, w * 0.18, h - 92, 12);
+    ctx.fill();
+    for (let i = 0; i < 2; i++) {
+      roundRect(ctx, x + w * 0.28 + i * w * 0.34, y + 80, w * 0.3, h * 0.28, 12);
+      ctx.fill();
+    }
+    roundRect(ctx, x + w * 0.28, y + h * 0.5, w * 0.64, h * 0.34, 12);
+    ctx.fill();
+  } else if (type === "landing") {
+    ctx.fillRect(x + w * 0.25, y + h * 0.34, w * 0.5, 10);
+    ctx.fillRect(x + w * 0.32, y + h * 0.44, w * 0.36, 7);
+    roundRect(ctx, x + w * 0.4, y + h * 0.6, w * 0.2, 30, 16);
+    ctx.fill();
+  } else if (type === "portfolio") {
+    [
+      [0.08, 0.18, 0.4, 0.4],
+      [0.52, 0.18, 0.4, 0.4],
+      [0.08, 0.62, 0.84, 0.22],
+    ].forEach(([cx, cy, cw, ch]) => {
+      roundRect(ctx, x + w * cx, y + h * cy, w * cw, h * ch, 12);
+      ctx.fill();
+    });
+  } else if (type === "ecommerce") {
+    for (let col = 0; col < 3; col++) {
+      roundRect(ctx, x + w * (0.08 + col * 0.31), y + h * 0.28, w * 0.27, h * 0.5, 12);
+      ctx.fill();
+    }
+  } else {
+    ctx.fillRect(x + w * 0.2, y + h * 0.22, w * 0.6, 9);
+    for (let i = 0; i < 5; i++) {
+      ctx.fillRect(x + w * 0.18, y + h * (0.36 + i * 0.1), w * (0.64 - (i % 2) * 0.1), 5);
+    }
+  }
+  ctx.restore();
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + width, y, x + width, y + height, radius);
+  ctx.arcTo(x + width, y + height, x, y + height, radius);
+  ctx.arcTo(x, y + height, x, y, radius);
+  ctx.arcTo(x, y, x + width, y, radius);
+  ctx.closePath();
+}
+
+function easeInOut(t: number) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+export function CodeConstellationHero() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const nodesRef = useRef<Node[]>([]);
+  const sizeRef = useRef({ width: 1, height: 1 });
+  const mouseRef = useRef({ x: 0, y: 0, px: 0, py: 0, active: false });
+  const phaseRef = useRef<Phase>("intro");
+  const phaseStartRef = useRef(0);
+  const mockupIdxRef = useRef(0);
+  const pausedRef = useRef(false);
+  const [phaseLabel, setPhaseLabel] = useState("initializing");
+  const [paused, setPaused] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
 
   useEffect(() => {
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const handleChange = () => setReduced(query.matches);
-    query.addEventListener("change", handleChange);
-    return () => query.removeEventListener("change", handleChange);
-  }, []);
-
-  return reduced;
-}
-
-function CodePill({
-  fragment,
-  assembled,
-  paused,
-}: {
-  fragment: CodeFragment;
-  assembled: boolean;
-  paused: boolean;
-}) {
-  const group = useRef<Group>(null);
-  const [hovered, setHovered] = useState(false);
-  const orbit = useMemo(() => new Vector3(...fragment.orbit), [fragment.orbit]);
-  const mockup = useMemo(() => new Vector3(...fragment.mockup), [fragment.mockup]);
-
-  useFrame(({ clock }) => {
-    if (!group.current) return;
-    const target = assembled ? mockup : orbit;
-    group.current.position.lerp(target, 0.045);
-    const pulse = paused ? 0 : Math.sin(clock.elapsedTime * 1.8 + orbit.x) * 0.025;
-    group.current.scale.setScalar((hovered ? 1.16 : 1) + pulse);
-    group.current.rotation.z = MathUtils.lerp(group.current.rotation.z, assembled ? 0 : orbit.x * 0.08, 0.05);
-  });
-
-  const handlePointer = (event: ThreeEvent<PointerEvent>, next: boolean) => {
-    event.stopPropagation();
-    setHovered(next);
-    document.body.style.cursor = next ? "pointer" : "";
-  };
-
-  return (
-    <group ref={group} position={fragment.orbit}>
-      <Html transform occlude={false} distanceFactor={9}>
-        <div
-          onPointerEnter={(event) => handlePointer(event as unknown as ThreeEvent<PointerEvent>, true)}
-          onPointerLeave={(event) => handlePointer(event as unknown as ThreeEvent<PointerEvent>, false)}
-          className={`rounded-2xl border px-3 py-2 font-mono text-[10px] shadow-2xl backdrop-blur-md transition-all duration-500 ${
-            hovered
-              ? "border-[var(--accent)] bg-[rgba(127,255,176,0.16)] text-[var(--foreground)]"
-              : "border-white/12 bg-black/50 text-[var(--muted)]"
-          }`}
-        >
-          <span className="mr-2 text-[var(--accent)]">{fragment.language}</span>
-          {fragment.code}
-          <div
-            className={`mt-1 max-w-[14rem] text-[9px] leading-4 text-[var(--foreground)] transition-opacity ${
-              hovered ? "opacity-100" : "opacity-0"
-            }`}
-          >
-            {fragment.explain}
-          </div>
-        </div>
-      </Html>
-    </group>
-  );
-}
-
-function WebsiteMockup({ assembled, activeIndex }: { assembled: boolean; activeIndex: number }) {
-  const group = useRef<Group>(null);
-  const mockup = mockupStyles[activeIndex % mockupStyles.length];
-
-  useFrame(({ clock }) => {
-    if (!group.current) return;
-    const targetScale = assembled ? 1 : 0.18;
-    group.current.scale.lerp(new Vector3(targetScale, targetScale, targetScale), 0.065);
-    group.current.rotation.y = Math.sin(clock.elapsedTime * 0.35) * 0.12;
-    group.current.rotation.x = -0.08 + Math.sin(clock.elapsedTime * 0.2) * 0.035;
-  });
-
-  return (
-    <group ref={group} position={[0, 0, -0.08]} scale={0.18}>
-      <RoundedBox args={[3.35, 2.15, 0.12]} radius={0.12} smoothness={8}>
-        <meshBasicMaterial color="#111513" transparent opacity={0.94} />
-      </RoundedBox>
-      <Html transform position={[0, 0, 0.09]} distanceFactor={6.3}>
-        <div className="w-[340px] rounded-[22px] border border-[var(--accent)]/25 bg-[#0d100f]/95 p-4 font-sans shadow-[0_0_70px_rgba(127,255,176,0.22)]">
-          <div className="mb-4 flex gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-300/80" />
-            <span className="h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-            <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]/80" />
-          </div>
-          <div className="rounded-2xl bg-[var(--accent)]/12 p-4">
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[var(--accent)]">{mockup.name}</p>
-            <p className="mt-2 text-2xl font-semibold tracking-[-0.06em] text-[var(--foreground)]">{mockup.headline}</p>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {mockup.lines.map((line) => (
-                <div key={line} className="rounded-xl border border-white/10 bg-white/[0.06] p-2 text-[10px] text-[var(--muted)]">
-                  {line}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="mt-3 h-2 rounded-full bg-white/10">
-            <div className="h-full w-3/4 rounded-full bg-[var(--accent)]" />
-          </div>
-        </div>
-      </Html>
-    </group>
-  );
-}
-
-function Scene({ paused, reduced }: { paused: boolean; reduced: boolean }) {
-  const rig = useRef<Group>(null);
-  const [assembled, setAssembled] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
+    pausedRef.current = paused;
+  }, [paused]);
 
   useEffect(() => {
-    if (paused || reduced) return;
-    const interval = window.setInterval(() => {
-      setAssembled((current) => {
-        if (!current) return true;
-        setActiveIndex((index) => (index + 1) % mockupStyles.length);
-        return false;
+    const nodeCount = 54;
+    nodesRef.current = Array.from({ length: nodeCount }, (_, index) => new Node(index, nodeCount));
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const setPhase = (next: Phase) => {
+      phaseRef.current = next;
+      phaseStartRef.current = performance.now();
+
+      if (next === "assembling") {
+        const type = mockupTypes[mockupIdxRef.current];
+        nodesRef.current.forEach((n) => {
+          n.setConstellationTarget();
+          n.targetOpacity = n.isText ? 0 : 0.18;
+        });
+        setPhaseLabel(mockupLabels[type]);
+      } else if (next === "dissolving") {
+        nodesRef.current.forEach((n) => {
+          n.setConstellationTarget();
+          n.targetOpacity = n.isText ? 0.7 : 0.55;
+        });
+        setPhaseLabel("dissolving");
+      } else if (next === "constellation") {
+        mockupIdxRef.current = (mockupIdxRef.current + 1) % mockupTypes.length;
+        setPhaseLabel("constellation");
+      } else if (next === "assembled") {
+        setPhaseLabel(`${mockupLabels[mockupTypes[mockupIdxRef.current]]} live`);
+      } else {
+        setPhaseLabel("initializing");
+      }
+    };
+
+    const resize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(320, rect.width);
+      const h = Math.max(360, rect.height);
+      sizeRef.current = { width: w, height: h };
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      mouseRef.current.x = w / 2;
+      mouseRef.current.y = h / 2;
+      mouseRef.current.px = w / 2;
+      mouseRef.current.py = h / 2;
+    };
+
+    const onMove = (event: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      mouseRef.current.x = event.clientX - rect.left;
+      mouseRef.current.y = event.clientY - rect.top;
+      mouseRef.current.active = true;
+    };
+    const onLeave = () => {
+      mouseRef.current.active = false;
+    };
+
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    window.addEventListener("resize", resize);
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerleave", onLeave);
+
+    setPhase("intro");
+
+    let raf = 0;
+    const loop = (now: number) => {
+      const w = sizeRef.current.width;
+      const h = sizeRef.current.height;
+      const elapsed = now - phaseStartRef.current;
+      const phase = phaseRef.current;
+
+      if (!pausedRef.current) {
+        if (phase === "intro" && elapsed > phaseDurations.intro) setPhase("constellation");
+      }
+
+      ctx.clearRect(0, 0, w, h);
+
+      mouseRef.current.px += (mouseRef.current.x - mouseRef.current.px) * 0.08;
+      mouseRef.current.py += (mouseRef.current.y - mouseRef.current.py) * 0.08;
+
+      const isConstellation = phase === "constellation" || phase === "intro";
+      const cameraFly = phase === "assembling" || phase === "assembled" ? 0.88 : 1;
+      const parallaxX = isConstellation ? (mouseRef.current.px - w / 2) * 0.04 : 0;
+      const parallaxY = isConstellation ? (mouseRef.current.py - h / 2) * 0.04 : 0;
+      const currentType = mockupTypes[mockupIdxRef.current];
+
+      let scaffoldAlpha = 0;
+      if (phase === "assembling") scaffoldAlpha = easeInOut(Math.min(1, elapsed / phaseDurations.assembling)) * 0.85;
+      else if (phase === "assembled") scaffoldAlpha = 0.9;
+      else if (phase === "dissolving") scaffoldAlpha = (1 - easeInOut(Math.min(1, elapsed / phaseDurations.dissolving))) * 0.85;
+      if (scaffoldAlpha > 0.01) drawMockupScaffold(ctx, w, h, currentType, scaffoldAlpha);
+
+      // Single, smooth easing speed for all transitions — synchronizes the motion.
+      const lerpSpeed = phase === "assembling" || phase === "dissolving" ? 0.07 : 0.04;
+
+      const t = now * 0.0004;
+      nodesRef.current.forEach((n, idx) => {
+        const drift = isConstellation ? Math.sin(t + idx * 0.7) * 0.018 : 0;
+        const driftY = isConstellation ? Math.cos(t * 0.85 + idx * 0.55) * 0.014 : 0;
+        const targetX = (isConstellation ? n.cx : n.tx) + drift;
+        const targetY = (isConstellation ? n.cy : n.ty) + driftY;
+        const targetZ = isConstellation ? n.cz : n.tz;
+        n.x += (targetX - n.x) * (pausedRef.current ? 0 : lerpSpeed);
+        n.y += (targetY - n.y) * (pausedRef.current ? 0 : lerpSpeed);
+        n.z += (targetZ - n.z) * (pausedRef.current ? 0 : lerpSpeed);
+        n.opacity += (n.targetOpacity - n.opacity) * 0.06;
       });
-    }, assembled ? 2200 : 8000);
-    return () => window.clearInterval(interval);
-  }, [assembled, paused, reduced]);
 
-  useFrame(({ pointer, clock }) => {
-    if (!rig.current) return;
-    rig.current.rotation.y = MathUtils.lerp(rig.current.rotation.y, pointer.x * 0.23, 0.035);
-    rig.current.rotation.x = MathUtils.lerp(rig.current.rotation.x, -pointer.y * 0.13, 0.035);
-    if (!paused && !reduced) {
-      rig.current.position.y = Math.sin(clock.elapsedTime * 0.6) * 0.08;
-    }
-  });
+      const sorted = [...nodesRef.current].sort((a, b) => b.z - a.z);
 
-  const linePoints = codeFragments.map((fragment) => fragment.orbit);
+      if (isConstellation) {
+        ctx.lineWidth = 0.6;
+        const projections = sorted.map((n) => n.project(w, h, parallaxX, parallaxY, cameraFly));
+        for (let i = 0; i < sorted.length; i++) {
+          const p1 = projections[i];
+          for (let j = i + 1; j < sorted.length; j++) {
+            const p2 = projections[j];
+            const dx = p1.x - p2.x;
+            const dy = p1.y - p2.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 110) {
+              const alpha = (1 - dist / 110) * 0.14 * Math.min(sorted[i].opacity, sorted[j].opacity);
+              ctx.strokeStyle = `rgba(127,255,176,${alpha})`;
+              ctx.beginPath();
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.stroke();
+            }
+          }
+        }
+      }
 
-  return (
-    <group ref={rig}>
-      {!assembled && (
-        <Line points={linePoints} color="#7fffb0" transparent opacity={0.2} lineWidth={1} dashed dashScale={18} />
-      )}
-      <WebsiteMockup assembled={assembled || reduced} activeIndex={activeIndex} />
-      {codeFragments.map((fragment) => (
-        <CodePill key={fragment.id} fragment={fragment} assembled={assembled || reduced} paused={paused || reduced} />
-      ))}
-    </group>
-  );
-}
+      sorted.forEach((n) => {
+        const p = n.project(w, h, parallaxX, parallaxY, cameraFly);
+        if (n.isText) {
+          if (!isConstellation) return;
+          const size = n.size * p.scale;
+          ctx.font = `${size}px "JetBrains Mono", monospace`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = `rgba(245,241,234,${Math.min(0.9, n.opacity)})`;
+          ctx.fillText(n.text, p.x, p.y);
+        } else {
+          ctx.fillStyle = `rgba(127,255,176,${Math.min(0.85, n.opacity)})`;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, n.size * p.scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
 
-function FallbackHero() {
-  return (
-    <div className="grid min-h-[420px] place-items-center rounded-[2rem] border border-white/10 bg-black/30 p-6">
-      <div className="w-full max-w-lg rounded-[2rem] border border-[var(--accent)]/25 bg-[#0e1110] p-5 shadow-[0_0_70px_rgba(127,255,176,0.18)]">
-        <div className="mb-5 flex items-center justify-between font-mono text-xs text-[var(--accent)]">
-          <span>code</span>
-          <span>to site</span>
-        </div>
-        <div className="space-y-3 font-mono text-sm text-[var(--muted)]">
-          <p>&lt;section class=&quot;hero&quot;&gt;</p>
-          <p className="pl-5 text-[var(--foreground)]">&lt;h1&gt;Beautiful websites, shipped&lt;/h1&gt;</p>
-          <p className="pl-5 text-[var(--accent)]">deploy({"{ target: 'production' }"})</p>
-          <p>&lt;/section&gt;</p>
-        </div>
-        <div className="mt-6 rounded-2xl bg-[var(--accent)]/12 p-4">
-          <div className="h-4 w-2/3 rounded-full bg-[var(--foreground)]/80" />
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <div className="h-16 rounded-xl bg-white/10" />
-            <div className="h-16 rounded-xl bg-white/10" />
-            <div className="h-16 rounded-xl bg-white/10" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+      raf = window.requestAnimationFrame(loop);
+    };
 
-export function CodeConstellationHero() {
-  const reduced = useReducedMotionPreference();
-  const [paused, setPaused] = useState(false);
+    raf = window.requestAnimationFrame(loop);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resize);
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerleave", onLeave);
+      window.cancelAnimationFrame(raf);
+    };
+  }, []);
 
   return (
-    <section className="relative min-h-screen overflow-hidden px-4 pb-16 pt-32 md:pt-40">
-      <div className="section-shell grid items-center gap-12 lg:grid-cols-[0.95fr_1.05fr]">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }}>
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.26em] text-[var(--accent)]">
-            The hero is the portfolio
-          </p>
-          <h1 className="mt-6 text-balance text-6xl font-semibold tracking-[-0.07em] md:text-8xl">
-            We turn code into sites people trust.
-          </h1>
-          <p className="mt-6 max-w-xl text-lg leading-8 text-[var(--muted)]">
-            Dark Code builds managed websites for small businesses. The preview is free. The build is fast. The
-            technical stuff stays handled.
-          </p>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <a
-              href={brand.calUrl}
-              className="rounded-full bg-[var(--accent)] px-6 py-3 text-center font-semibold text-black shadow-[0_0_34px_rgba(127,255,176,0.28)] transition-transform hover:-translate-y-0.5"
-            >
-              Start something
-            </a>
-            <a
-              href="/pricing"
-              className="rounded-full border border-white/12 px-6 py-3 text-center font-semibold text-[var(--foreground)] transition-colors hover:bg-white/6"
-            >
-              See pricing
-            </a>
-          </div>
-        </motion.div>
+    <section className="relative overflow-hidden px-4 pb-16 pt-32 md:pt-40">
+      <div className="section-shell grid items-center gap-10 lg:grid-cols-[0.92fr_1.08fr]">
+        <div className="space-y-8">
+          <motion.p
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.7 }}
+            className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--muted)]"
+          >
+            <span className="mr-3 inline-block h-px w-7 bg-[var(--accent)] align-middle" />
+            Dark Code - independent build studio
+          </motion.p>
+
+          <motion.h1
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.85, delay: 0.2 }}
+            className="max-w-[12ch] text-[clamp(52px,5.6vw,82px)] font-medium leading-[0.98] tracking-[-0.055em] text-[var(--foreground)]"
+          >
+            <span className="block">We turn <span className="font-light italic text-[var(--accent)]">code</span></span>
+            <span className="block">into websites</span>
+            <span className="block font-mono text-[0.8em] font-normal tracking-[-0.02em] text-[var(--foreground)]">
+              that. feel. built
+            </span>
+          </motion.h1>
+
+          <motion.div
+            className="pointer-events-auto space-y-5"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.75, delay: 0.35 }}
+          >
+            <p className="max-w-[440px] text-sm leading-7 text-[var(--muted)] md:text-base">
+              A small studio building fast, considered websites for people who care about details. No decks, no fake
+              polish, just a free preview and a clean build.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setPaused((p) => !p)}
+                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/45 px-4 py-2.5 font-mono text-xs uppercase tracking-[0.08em] text-[var(--foreground)] transition-colors hover:border-[var(--accent)]/55 hover:text-[var(--accent)]"
+              >
+                {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+                {paused ? "play" : "pause"}
+              </button>
+              <a
+                href={brand.calUrl}
+                className="group inline-flex items-center gap-3 border border-white/15 bg-black/20 px-5 py-3 font-mono text-xs uppercase tracking-[0.1em] text-[var(--foreground)] transition-all hover:border-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-ink)]"
+              >
+                Start something
+                <span className="transition-transform group-hover:translate-x-1">→</span>
+              </a>
+            </div>
+          </motion.div>
+        </div>
 
         <motion.div
+          initial={{ opacity: 0, y: 18, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.75, delay: 0.15 }}
           className="relative"
-          initial={{ opacity: 0, scale: 0.96 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.15, duration: 0.8 }}
         >
-          <div className="absolute right-4 top-4 z-20">
-            <button
-              type="button"
-              onClick={() => setPaused((current) => !current)}
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/55 px-3 py-2 text-xs text-[var(--muted)] backdrop-blur-md transition-colors hover:text-[var(--foreground)]"
-              aria-pressed={paused}
-            >
-              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-              {paused ? "Play motion" : "Pause motion"}
-            </button>
+          <div className="glass relative min-h-[560px] overflow-hidden rounded-[2rem]">
+            <canvas ref={canvasRef} className="absolute inset-0 z-[1] h-full w-full" />
+            <div className="pointer-events-none absolute inset-0 z-[2] bg-[radial-gradient(ellipse_at_center,transparent_48%,rgba(10,10,11,0.72)_100%)]" />
+            <div className="pointer-events-none absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-1.5 font-mono text-[11px] text-[var(--muted)]">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" />
+              rendering · {phaseLabel}
+            </div>
           </div>
-          <div className="glass relative min-h-[520px] overflow-hidden rounded-[2rem]">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(127,255,176,0.13),transparent_28rem)]" />
-            {reduced ? (
-              <FallbackHero />
-            ) : (
-              <Canvas camera={{ position: [0, 0, 6.3], fov: 48 }} dpr={[1, 1.6]} gl={{ antialias: true, alpha: true }}>
-                <ambientLight intensity={1.8} />
-                <Scene paused={paused} reduced={reduced} />
-              </Canvas>
-            )}
-          </div>
-          <p className="mt-4 text-center font-mono text-xs text-[var(--muted)]">
-            Move your cursor over the code fragments. Every few seconds, they assemble into a site.
-          </p>
         </motion.div>
       </div>
     </section>
